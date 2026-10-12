@@ -1,0 +1,6 @@
+{
+  "name": "Atoll// Rwanda Community & Dating",
+  "description": "Atoll// is a dual-space mobile-first social experience in Rwanda featuring an anonymous community Lagoon and verified progressive dating Shore.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

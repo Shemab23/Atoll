@@ -14,6 +14,11 @@ import {
   reports,
 } from "@/db/schema";
 import { AppError } from "@/server/errors/app-error";
+import {
+  getAdminRole,
+  requireAdmin,
+  requireModerationPermission,
+} from "@/server/services/admin";
 
 const userIdSchema = z.string().uuid();
 
@@ -36,6 +41,7 @@ const paginationSchema = z
   .strict();
 
 type ModerationRole = "owner" | "admin" | "moderator";
+type BatchModerationItem = Parameters<typeof applyModerationAction>[1];
 
 /**
  * Applies a moderation action to the target of a report.
@@ -48,6 +54,53 @@ type ModerationRole = "owner" | "admin" | "moderator";
  * The action record, target change, and report status update
  * are performed in one transaction.
  */
+export async function applyBatchReportModerationActions(
+  actorId: string,
+  actions: BatchModerationItem[],
+) {
+  if (actions.length < 1 || actions.length > 50) {
+    throw new AppError(
+      "A batch must contain between 1 and 50 actions.",
+      "INVALID_BATCH_SIZE",
+      400,
+    );
+  }
+
+  const results = [];
+
+  for (const action of actions) {
+    try {
+      const data = await applyModerationAction(actorId, action);
+
+      results.push({
+        reportId: action.reportId,
+        success: true as const,
+        data,
+      });
+    } catch (error) {
+      results.push({
+        reportId: action.reportId,
+        success: false as const,
+        error: {
+          code: error instanceof AppError ? error.code : "INTERNAL_ERROR",
+          message:
+            error instanceof AppError
+              ? error.message
+              : "The moderation action could not be completed.",
+        },
+      });
+    }
+  }
+
+  const succeeded = results.filter((result) => result.success).length;
+
+  return {
+    total: results.length,
+    succeeded,
+    failed: results.length - succeeded,
+    results,
+  };
+}
 export async function applyModerationAction(
   actorId: string,
   input: ApplyModerationInput,
@@ -129,9 +182,13 @@ export async function applyModerationAction(
       throw new AppError("Report not found.", "REPORT_NOT_FOUND", 404);
     }
 
-    if (report.status === "resolved" || report.status === "dismissed") {
+    if (
+      report.status === "resolved" ||
+      report.status === "dismissed" ||
+      report.status === "withdrawn"
+    ) {
       throw new AppError(
-        "This report has already been closed.",
+        "This report has already been settled",
         "REPORT_ALREADY_CLOSED",
         409,
       );
@@ -400,4 +457,114 @@ async function requireActiveModerationViewer(
   }
 
   return result.role;
+}
+
+export const directUserModerationSchema = z.object({
+  actionType: z.enum(["warning", "suspend", "ban"]),
+  reason: z.string().trim().min(3).max(1000),
+  expiresAt: z.coerce.date().nullable().optional(),
+});
+
+export type DirectUserModerationInput = z.infer<
+  typeof directUserModerationSchema
+>;
+
+export async function applyUserModerationAction(
+  actorId: string,
+  targetUserId: string,
+  input: DirectUserModerationInput,
+) {
+  const actorRole = await requireAdmin(actorId);
+
+  await requireModerationPermission(actorId, input.actionType);
+
+  if (actorId === targetUserId) {
+    throw new AppError(
+      "Administrators cannot moderate their own accounts.",
+      "SELF_MODERATION_NOT_ALLOWED",
+      403,
+    );
+  }
+
+  const targetRole = await getAdminRole(targetUserId);
+
+  if (targetRole === "owner") {
+    throw new AppError(
+      "The owner account cannot be moderated.",
+      "OWNER_PROTECTED",
+      403,
+    );
+  }
+
+  if (targetRole && actorRole !== "owner") {
+    throw new AppError(
+      "Only the owner can moderate another administrator.",
+      "ADMIN_PROTECTED",
+      403,
+    );
+  }
+
+  if (input.actionType === "suspend" && input.expiresAt) {
+    if (input.expiresAt.getTime() <= Date.now()) {
+      throw new AppError(
+        "The suspension expiry must be in the future.",
+        "INVALID_EXPIRY",
+        400,
+      );
+    }
+  } else if (input.actionType !== "suspend" && input.expiresAt) {
+    throw new AppError(
+      "An expiry can only be set for a suspension.",
+      "INVALID_EXPIRY",
+      400,
+    );
+  }
+
+  return db.transaction(async (tx) => {
+    const [target] = await tx
+      .select({
+        id: profiles.id,
+        accountStatus: profiles.accountStatus,
+      })
+      .from(profiles)
+      .where(eq(profiles.id, targetUserId))
+      .for("update")
+      .limit(1);
+
+    if (!target) {
+      throw new AppError("User not found.", "USER_NOT_FOUND", 404);
+    }
+
+    if (target.accountStatus === "deleted") {
+      throw new AppError(
+        "A deleted account cannot be moderated.",
+        "USER_NOT_MODERATABLE",
+        400,
+      );
+    }
+
+    if (input.actionType === "suspend" || input.actionType === "ban") {
+      await tx
+        .update(profiles)
+        .set({
+          accountStatus: "suspended",
+          updatedAt: new Date(),
+        })
+        .where(eq(profiles.id, targetUserId));
+    }
+
+    const [action] = await tx
+      .insert(moderationActions)
+      .values({
+        adminId: actorId,
+        targetUserId,
+        reportId: null,
+        actionType: input.actionType,
+        reason: input.reason,
+        expiresAt: input.expiresAt ?? null,
+      })
+      .returning();
+
+    return action;
+  });
 }

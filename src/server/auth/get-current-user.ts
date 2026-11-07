@@ -11,6 +11,11 @@ export async function getCurrentUser() {
   } = await supabase.auth.getUser();
 
   if (error) {
+    // A missing session means the visitor is not signed in.
+    if (error.name === "AuthSessionMissingError") {
+      return null;
+    }
+
     throw error;
   }
 

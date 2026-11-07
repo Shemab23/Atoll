@@ -4,7 +4,14 @@ import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "@/db";
-import { profiles, profileSettings } from "@/db/schema";
+import {
+  profiles,
+  profileSettings,
+  posts,
+  comments,
+  messages,
+  conversationMembers,
+} from "@/db/schema";
 import { AppError } from "@/server/errors/app-error";
 
 // -----------------------------------------------------------------------------
@@ -367,3 +374,74 @@ export async function updateProfileSettings(
 
   return updatedSettings;
 }
+
+export async function softDeleteProfile(userId: string) {
+  const deletedAt = new Date();
+
+  const reservedUsername = `deleted_${userId.replace(/-/g, "").slice(0, 22)}`;
+
+  await db.transaction(async (tx) => {
+    const [profile] = await tx
+      .select({ id: profiles.id })
+      .from(profiles)
+      .where(eq(profiles.id, userId))
+      .limit(1);
+
+    if (!profile) {
+      throw new AppError("Profile not found.", "PROFILE_NOT_FOUND", 404);
+    }
+
+    await tx
+      .update(posts)
+      .set({
+        status: "deleted",
+        updatedAt: deletedAt,
+      })
+      .where(eq(posts.authorId, userId));
+
+    await tx
+      .update(comments)
+      .set({ status: "deleted" })
+      .where(eq(comments.authorId, userId));
+
+    await tx
+      .update(messages)
+      .set({
+        content: null,
+        deletedAt: sql`COALESCE(${messages.deletedAt}, ${deletedAt})`,
+      })
+      .where(eq(messages.senderId, userId));
+
+    await tx
+      .update(conversationMembers)
+      .set({ isActive: false })
+      .where(eq(conversationMembers.userId, userId));
+
+    await tx
+      .update(profileSettings)
+      .set({
+        isDiscoverable: false,
+        showOnlineStatus: false,
+        allowMessages: "nobody",
+      })
+      .where(eq(profileSettings.userId, userId));
+
+    await tx
+      .update(profiles)
+      .set({
+        username: reservedUsername,
+        displayName: "Deleted account",
+        bio: null,
+        country: null,
+        city: null,
+        accountStatus: "deleted",
+        updatedAt: deletedAt,
+      })
+      .where(eq(profiles.id, userId));
+  });
+
+  return {
+    userId,
+    accountStatus: "deleted" as const,
+  };
+} // leaving follows, blocks, reactions, notifications, reports, moderation records, and admin records untouch[no soft delete yet]

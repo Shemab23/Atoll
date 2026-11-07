@@ -1,0 +1,1672 @@
+
+openapi: 3.1.0
+
+info:
+  title: Atoll API
+  version: 1.0.0
+  description: |
+    HTTP API documentation for the Atoll social connection platform.
+
+    This specification is based on the supplied Next.js API route inventory
+    and controller information.
+
+    Success responses use the common { data: ... } envelope.
+    Error responses use { error: { code, message } }.
+
+    Some response payload schemas remain to be verified against the
+    actual controllers and services. They are intentionally not guessed.
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+  - url: https://your-production-domain.com
+    description: Production (replace with the actual deployment URL)
+
+tags:
+  - name: Health
+  - name: Authentication
+  - name: Profiles
+  - name: Account
+  - name: Posts
+  - name: Comments
+  - name: Reactions
+  - name: Follows
+  - name: Blocks
+  - name: Conversations
+  - name: Messages
+  - name: Reports
+  - name: Notifications
+  - name: Administration
+  - name: Moderation
+
+components:
+  securitySchemes:
+    supabaseSession:
+      type: apiKey
+      in: header
+      name: Cookie
+      description: |
+        Authentication is managed through Supabase SSR session cookies.
+        Send the session cookies belonging to the authenticated browser.
+        The actual cookie names may be project-specific or chunked.
+
+  schemas:
+    SuccessResponse:
+      type: object
+      properties:
+        data: {}
+      required:
+        - data
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: UNAUTHORIZED
+            message:
+              type: string
+              example: Authentication is required.
+          required:
+            - code
+            - message
+      required:
+        - error
+
+    Pagination:
+      type: object
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+  responses:
+    BadRequest:
+      description: Invalid request or validation failure.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    Unauthorized:
+      description: Authentication is required.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    Forbidden:
+      description: The authenticated user is not permitted to perform this action.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    NotFound:
+      description: The requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    InternalServerError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  parameters:
+    limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+      description: Maximum number of records to return. Defaults vary by endpoint.
+
+    offset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+      description: Number of records to skip.
+
+    userId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    reportId:
+      name: reportId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    postId:
+      name: postId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    commentId:
+      name: commentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    conversationId:
+      name: conversationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    messageId:
+      name: messageId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    notificationId:
+      name: notificationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    username:
+      name: username
+      in: path
+      required: true
+      schema:
+        type: string
+
+security:
+  - supabaseSession: []
+
+paths:
+
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Check API health
+      description: Returns the health status and timestamp.
+      security: []
+      responses:
+        "200":
+          description: API is responding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/auth/signup:
+    post:
+      tags: [Authentication]
+      summary: Register a new account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, username, dateOfBirth]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                username:
+                  type: string
+                  minLength: 3
+                  maxLength: 30
+                dateOfBirth:
+                  type: string
+                  format: date
+                displayName:
+                  type: string
+                  maxLength: 60
+      responses:
+        "200":
+          description: Account registration result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Sign in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Login result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Sign out
+      responses:
+        "200":
+          description: Logout result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/auth/forgot-password:
+    post:
+      tags: [Authentication]
+      summary: Request a password reset email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Password reset request accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/auth/reset-password:
+    post:
+      tags: [Authentication]
+      summary: Set a new password
+      description: Requires a valid Supabase password recovery session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+      responses:
+        "200":
+          description: Password update result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/me:
+    get:
+      tags: [Profiles]
+      summary: Get current user's profile
+      responses:
+        "200":
+          description: Current profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [Profiles]
+      summary: Update current user's profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                displayName:
+                  type: [string, "null"]
+                bio:
+                  type: [string, "null"]
+                avatarUrl:
+                  type: [string, "null"]
+                coverUrl:
+                  type: [string, "null"]
+                country:
+                  type: [string, "null"]
+                city:
+                  type: [string, "null"]
+      responses:
+        "200":
+          description: Updated profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/me/settings:
+    get:
+      tags: [Profiles]
+      summary: Get current user's profile settings
+      responses:
+        "200":
+          description: Profile settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [Profiles]
+      summary: Update current user's profile settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                isDiscoverable:
+                  type: boolean
+                showOnlineStatus:
+                  type: boolean
+                allowMessages:
+                  type: string
+                  enum: [everyone, followers, nobody]
+                notificationPreferences:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "200":
+          description: Updated profile settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/me/account:
+    delete:
+      tags: [Account]
+      summary: Deactivate current account
+      description: Requires the current password. Application data is retired and the Auth identity is disabled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword]
+              properties:
+                currentPassword:
+                  type: string
+      responses:
+        "200":
+          description: Account deactivation result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/me/blocked:
+    get:
+      tags: [Blocks]
+      summary: List users blocked by the current user
+      responses:
+        "200":
+          description: Blocked users.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/me/posts:
+    get:
+      tags: [Posts]
+      summary: List current user's posts
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Current user's posts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/me/reports:
+    get:
+      tags: [Reports]
+      summary: List reports submitted by the current user
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, reviewing, withdrawn, resolved, dismissed]
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: User's submitted reports.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/me/reports/{reportId}/withdraw:
+    patch:
+      tags: [Reports]
+      summary: Withdraw a submitted report
+      parameters:
+        - $ref: "#/components/parameters/reportId"
+      responses:
+        "200":
+          description: Report withdrawal result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/profiles/{username}:
+    get:
+      tags: [Profiles]
+      summary: Get a public profile
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/username"
+      responses:
+        "200":
+          description: Public profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/posts:
+    post:
+      tags: [Posts]
+      summary: Create a post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [postType]
+              properties:
+                content:
+                  type: [string, "null"]
+                postType:
+                  type: string
+                  enum: [text, image, mixed]
+                visibility:
+                  type: string
+                  enum: [public, followers]
+                media:
+                  type: array
+                  maxItems: 10
+                  items:
+                    type: object
+                    required: [storagePath, mediaType]
+                    properties:
+                      storagePath:
+                        type: string
+                      mediaType:
+                        type: string
+                        enum:
+                          - image/jpeg
+                          - image/png
+                          - image/webp
+                          - image/gif
+                      displayOrder:
+                        type: integer
+      responses:
+        "200":
+          description: Created post.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/posts/{postId}:
+    patch:
+      tags: [Posts]
+      summary: Update a post
+      parameters:
+        - $ref: "#/components/parameters/postId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Update fields are defined by the post update schema.
+              additionalProperties: true
+      responses:
+        "200":
+          description: Updated post.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Posts]
+      summary: Delete a post
+      parameters:
+        - $ref: "#/components/parameters/postId"
+      responses:
+        "200":
+          description: Post deletion result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/posts/{postId}/comments:
+    get:
+      tags: [Comments]
+      summary: List comments on a post
+      parameters:
+        - $ref: "#/components/parameters/postId"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Comments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+    post:
+      tags: [Comments]
+      summary: Create a comment
+      parameters:
+        - $ref: "#/components/parameters/postId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  maxLength: 5000
+                parentId:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Created comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/comments/{commentId}:
+    patch:
+      tags: [Comments]
+      summary: Update a comment
+      parameters:
+        - $ref: "#/components/parameters/commentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  maxLength: 5000
+      responses:
+        "200":
+          description: Updated comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Comments]
+      summary: Delete a comment
+      parameters:
+        - $ref: "#/components/parameters/commentId"
+      responses:
+        "200":
+          description: Comment deletion result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/posts/{postId}/reactions:
+    post:
+      tags: [Reactions]
+      summary: Add or change a post reaction
+      parameters:
+        - $ref: "#/components/parameters/postId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reactionType]
+              properties:
+                reactionType:
+                  type: string
+                  minLength: 1
+                  maxLength: 30
+      responses:
+        "200":
+          description: Reaction result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Reactions]
+      summary: Remove a post reaction
+      parameters:
+        - $ref: "#/components/parameters/postId"
+      responses:
+        "200":
+          description: Reaction removal result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/comments/{commentId}/reactions:
+    post:
+      tags: [Reactions]
+      summary: Add or change a comment reaction
+      parameters:
+        - $ref: "#/components/parameters/commentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reactionType]
+              properties:
+                reactionType:
+                  type: string
+                  minLength: 1
+                  maxLength: 30
+      responses:
+        "200":
+          description: Reaction result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Reactions]
+      summary: Remove a comment reaction
+      parameters:
+        - $ref: "#/components/parameters/commentId"
+      responses:
+        "200":
+          description: Reaction removal result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/users/{userId}/block:
+    post:
+      tags: [Blocks]
+      summary: Block a user
+      parameters:
+        - $ref: "#/components/parameters/userId"
+      responses:
+        "200":
+          description: Block result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Blocks]
+      summary: Unblock a user
+      parameters:
+        - $ref: "#/components/parameters/userId"
+      responses:
+        "200":
+          description: Unblock result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/conversations:
+    get:
+      tags: [Conversations]
+      summary: List current user's conversations
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Conversations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Conversations]
+      summary: Create a direct or group conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                participantId:
+                  type: string
+                  format: uuid
+                participantIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 49
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: Created conversation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/conversations/{conversationId}:
+    get:
+      tags: [Conversations]
+      summary: Get conversation details
+      parameters:
+        - $ref: "#/components/parameters/conversationId"
+      responses:
+        "200":
+          description: Conversation details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/conversations/{conversationId}/members:
+    post:
+      tags: [Conversations]
+      summary: Add a conversation member
+      parameters:
+        - $ref: "#/components/parameters/conversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Member information as required by the route schema.
+              additionalProperties: true
+      responses:
+        "200":
+          description: Member addition result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/conversations/{conversationId}/members/{userId}:
+    delete:
+      tags: [Conversations]
+      summary: Remove a conversation member
+      parameters:
+        - $ref: "#/components/parameters/conversationId"
+        - $ref: "#/components/parameters/userId"
+      responses:
+        "200":
+          description: Member removal result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/conversations/{conversationId}/members/me:
+    delete:
+      tags: [Conversations]
+      summary: Leave a conversation
+      parameters:
+        - $ref: "#/components/parameters/conversationId"
+      responses:
+        "200":
+          description: Leave conversation result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/conversations/{conversationId}/messages:
+    get:
+      tags: [Messages]
+      summary: List messages in a conversation
+      parameters:
+        - $ref: "#/components/parameters/conversationId"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Conversation messages.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Messages]
+      summary: Send a message
+      parameters:
+        - $ref: "#/components/parameters/conversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content:
+                  type: [string, "null"]
+                  maxLength: 5000
+                messageType:
+                  type: string
+                  enum: [text, image]
+                mediaPath:
+                  type: [string, "null"]
+                  maxLength: 1000
+      responses:
+        "200":
+          description: Sent message.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/conversations/{conversationId}/read:
+    post:
+      tags: [Messages]
+      summary: Mark conversation messages as read
+      parameters:
+        - $ref: "#/components/parameters/conversationId"
+      responses:
+        "200":
+          description: Read status update.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/messages/{messageId}:
+    patch:
+      tags: [Messages]
+      summary: Edit a message
+      parameters:
+        - $ref: "#/components/parameters/messageId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content:
+                  type: string
+                  maxLength: 5000
+      responses:
+        "200":
+          description: Updated message.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Messages]
+      summary: Delete a message
+      parameters:
+        - $ref: "#/components/parameters/messageId"
+      responses:
+        "200":
+          description: Message deletion result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/reports:
+    post:
+      tags: [Reports]
+      summary: Submit a report
+      description: Current route supports post, comment and message targets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetType, reason]
+              properties:
+                targetType:
+                  type: string
+                  enum: [post, comment, message]
+                targetId:
+                  type: string
+                  format: uuid
+                reason:
+                  type: string
+                  minLength: 2
+                  maxLength: 80
+                description:
+                  type: string
+                  maxLength: 2000
+      responses:
+        "200":
+          description: Report submission result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/notifications:
+    get:
+      tags: [Notifications]
+      summary: List current user's notifications
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - name: unreadOnly
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Notifications.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/notifications/{notificationId}/read:
+    patch:
+      tags: [Notifications]
+      summary: Mark one notification as read
+      parameters:
+        - $ref: "#/components/parameters/notificationId"
+      responses:
+        "200":
+          description: Notification read status update.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/notifications/read-all:
+    patch:
+      tags: [Notifications]
+      summary: Mark all notifications as read
+      responses:
+        "200":
+          description: Bulk notification read status update.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/admin/overview:
+    get:
+      tags: [Administration]
+      summary: Get administration overview
+      responses:
+        "200":
+          description: Admin overview.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/overview/users:
+    get:
+      tags: [Administration]
+      summary: List users
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: accountStatus
+          in: query
+          schema:
+            type: string
+            enum: [active, suspended, deleted]
+      responses:
+        "200":
+          description: User list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/overview/users/administrators:
+    get:
+      tags: [Administration]
+      summary: List administrators and moderators
+      responses:
+        "200":
+          description: Administrator list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/overview/users/{userId}:
+    get:
+      tags: [Administration]
+      summary: Get user details
+      parameters:
+        - $ref: "#/components/parameters/userId"
+      responses:
+        "200":
+          description: User details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/overview/users/{userId}/moderation:
+    post:
+      tags: [Administration]
+      summary: Apply direct user moderation
+      parameters:
+        - $ref: "#/components/parameters/userId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Direct user moderation schema.
+              additionalProperties: true
+      responses:
+        "200":
+          description: User moderation result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/overview/users/{userId}/moderation-history:
+    get:
+      tags: [Administration]
+      summary: Get user moderation history
+      parameters:
+        - $ref: "#/components/parameters/userId"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: User moderation history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/overview/users/{userId}/role:
+    post:
+      tags: [Administration]
+      summary: Grant an administrator or moderator role
+      parameters:
+        - $ref: "#/components/parameters/userId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [admin, moderator]
+      responses:
+        "200":
+          description: Role grant result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [Administration]
+      summary: Revoke an administrator or moderator role
+      parameters:
+        - $ref: "#/components/parameters/userId"
+      responses:
+        "200":
+          description: Role revocation result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/reports:
+    get:
+      tags: [Moderation]
+      summary: List reports for administration
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, reviewing, withdrawn, resolved, dismissed]
+      responses:
+        "200":
+          description: Reports list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/reports/{reportId}:
+    get:
+      tags: [Moderation]
+      summary: Get report details
+      parameters:
+        - $ref: "#/components/parameters/reportId"
+      responses:
+        "200":
+          description: Report details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/reports/{reportId}/status:
+    patch:
+      tags: [Moderation]
+      summary: Update report status
+      parameters:
+        - $ref: "#/components/parameters/reportId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [pending, reviewing, resolved, dismissed]
+      responses:
+        "200":
+          description: Report status update result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/moderation/queue:
+    get:
+      tags: [Moderation]
+      summary: Get moderation queue
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, reviewing]
+            default: pending
+      responses:
+        "200":
+          description: Moderation queue.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/moderation/reports/{reportId}:
+    get:
+      tags: [Moderation]
+      summary: Get moderation report details
+      parameters:
+        - $ref: "#/components/parameters/reportId"
+      responses:
+        "200":
+          description: Moderation report details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/moderation/reports/{reportId}/review:
+    post:
+      tags: [Moderation]
+      summary: Move a report into reviewing status
+      parameters:
+        - $ref: "#/components/parameters/reportId"
+      responses:
+        "200":
+          description: Report review result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/moderation/action:
+    get:
+      tags: [Moderation]
+      summary: List moderation actions
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Moderation action history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Moderation]
+      summary: Apply a report moderation action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reportId, actionType, reason]
+              properties:
+                reportId:
+                  type: string
+                  format: uuid
+                actionType:
+                  type: string
+                  enum: [warning, hide, suspend, ban]
+                reason:
+                  type: string
+                  minLength: 3
+                  maxLength: 1000
+                expiresAt:
+                  type: [string, "null"]
+                  format: date-time
+      responses:
+        "200":
+          description: Moderation action result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/moderation/action/limited:
+    get:
+      tags: [Moderation]
+      summary: Get moderator-only moderation action history
+      description: This route is designated moderator-only.
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Moderation action history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Moderation]
+      summary: Apply a moderator-only moderation action
+      description: This route is designated moderator-only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reportId, actionType, reason]
+              properties:
+                reportId:
+                  type: string
+                  format: uuid
+                actionType:
+                  type: string
+                  enum: [warning, hide, suspend, ban]
+                reason:
+                  type: string
+                  minLength: 3
+                  maxLength: 1000
+                expiresAt:
+                  type: [string, "null"]
+                  format: date-time
+      responses:
+        "200":
+          description: Moderation action result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/moderation/action/batch:
+    post:
+      tags: [Moderation]
+      summary: Apply multiple moderation actions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [actions]
+              properties:
+                actions:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [reportId, actionType, reason]
+                    properties:
+                      reportId:
+                        type: string
+                        format: uuid
+                      actionType:
+                        type: string
+                        enum: [warning, hide, suspend, ban]
+                      reason:
+                        type: string
+                        minLength: 3
+                        maxLength: 1000
+                      expiresAt:
+                        type: [string, "null"]
+                        format: date-time
+      responses:
+        "200":
+          description: Batch moderation result. Individual actions may succeed or fail independently.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"

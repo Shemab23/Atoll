@@ -776,3 +776,72 @@ export async function markConversationAsRead(
 
   return { updated: true };
 }
+
+// -----------------------------------------------------------------------------
+// Get conversation details
+// -----------------------------------------------------------------------------
+
+/**
+ * Retrieves a conversation and its active members.
+ * Only active members can view conversation details.
+ */
+export async function getConversationDetails(
+  userId: string,
+  conversationId: string,
+) {
+  const validatedUserId = validateUuid(userId, "user ID");
+  const validatedConversationId = validateUuid(
+    conversationId,
+    "conversation ID",
+  );
+
+  const [conversation] = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.id, validatedConversationId))
+    .limit(1);
+
+  if (!conversation) {
+    throw new AppError(
+      "Conversation not found.",
+      "CONVERSATION_NOT_FOUND",
+      404,
+    );
+  }
+
+  const isMember = await isConversationMember(
+    validatedConversationId,
+    validatedUserId,
+  );
+
+  if (!isMember) {
+    throw new AppError(
+      "You are not an active member of this conversation.",
+      "NOT_CONVERSATION_MEMBER",
+      403,
+    );
+  }
+
+  const members = await db
+    .select({
+      id: profiles.id,
+      username: profiles.username,
+      displayName: profiles.displayName,
+      avatarUrl: profiles.avatarUrl,
+      joinedAt: conversationMembers.joinedAt,
+      lastReadAt: conversationMembers.lastReadAt,
+    })
+    .from(conversationMembers)
+    .innerJoin(profiles, eq(profiles.id, conversationMembers.userId))
+    .where(
+      and(
+        eq(conversationMembers.conversationId, validatedConversationId),
+        eq(conversationMembers.isActive, true),
+      ),
+    );
+
+  return {
+    ...conversation,
+    members,
+  };
+}

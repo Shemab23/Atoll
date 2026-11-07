@@ -1,5 +1,6 @@
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import { eq } from "drizzle-orm";
 
 config({ path: ".env" });
 config();
@@ -271,9 +272,6 @@ function validateConfiguration() {
   getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
   getRequiredEnv("SEED_USER_PASSWORD");
   getRequiredEnv("ATOLL_OWNER_USER_ID");
-  getRequiredEnv("ATOLL_OWNER_USERNAME");
-  getRequiredEnv("ATOLL_OWNER_DISPLAY_NAME");
-  getRequiredEnv("ATOLL_OWNER_DATE_OF_BIRTH");
 }
 
 // ======================================================
@@ -343,6 +341,12 @@ async function getOrCreateMockAuthUser(
   const existingUser = await findAuthUserByEmail(supabase, email);
 
   if (existingUser) {
+    if (existingUser.user_metadata?.is_seed_account !== true) {
+      throw new Error(
+        `Refusing to reuse ${email}: the existing Auth account is not marked as a seed account.`,
+      );
+    }
+
     console.log(`  Reusing Auth account: ${email}`);
     return existingUser;
   }
@@ -354,6 +358,11 @@ async function getOrCreateMockAuthUser(
     user_metadata: {
       username: user.username,
       display_name: user.displayName,
+      date_of_birth: user.dateOfBirth,
+      bio: user.bio,
+      country: user.country,
+      city: user.city,
+      avatar_url: getAvatarUrl(user.avatarSeed),
       is_seed_account: true,
     },
   });
@@ -394,25 +403,10 @@ async function seed() {
     console.log("\nStarting Atoll development seed...\n");
 
     // --------------------------------------------------
-    // A. SAFETY CHECK
+    // A. VERIFY OR INITIALIZE THE PERMANENT OWNER
     // --------------------------------------------------
 
-    const existingProfiles = await db
-      .select({ id: (await import("./schema/profiles")).profiles.id })
-      .from((await import("./schema/profiles")).profiles)
-      .limit(1);
-
-    if (existingProfiles.length > 0) {
-      throw new Error(
-        "Application profiles already exist. Run the development cleanup first, then retry the seed.",
-      );
-    }
-
-    // --------------------------------------------------
-    // B. GET THE REAL OWNER AUTH ACCOUNT
-    // --------------------------------------------------
-
-    console.log("Checking owner Auth account...");
+    console.log("Checking owner account...");
 
     const ownerId = getRequiredEnv("ATOLL_OWNER_USER_ID");
 
@@ -421,19 +415,102 @@ async function seed() {
 
     if (ownerError || !ownerResult.user) {
       throw new Error(
-        `Owner Auth account not found: ${ownerError?.message ?? "Check ATOLL_OWNER_USER_ID."}`,
+        `Owner Auth account not found: ${
+          ownerError?.message ?? "Check ATOLL_OWNER_USER_ID."
+        }`,
       );
     }
 
+    const { profiles, profileSettings } = await import("./schema/profiles");
+    const { adminUsers } = await import("./schema/adminUser");
+
+    // The owner Auth account is created manually in Supabase.
+    // Create the public profile only if it does not already exist.
+    const [foundOwnerProfile] = await db
+      .select()
+      .from(profiles)
+      .where(eq(profiles.id, ownerId))
+      .limit(1);
+
+    let ownerProfile = foundOwnerProfile;
+
+    if (!ownerProfile) {
+      console.log("Owner profile is missing. Initializing it...");
+
+      const ownerUsername = getRequiredEnv(
+        "ATOLL_OWNER_USERNAME",
+      ).toLowerCase();
+      const ownerDisplayName = getRequiredEnv("ATOLL_OWNER_DISPLAY_NAME");
+      const ownerDateOfBirth = getRequiredEnv("ATOLL_OWNER_DATE_OF_BIRTH");
+
+      const [createdOwnerProfile] = await db
+        .insert(profiles)
+        .values({
+          id: ownerId,
+          username: ownerUsername,
+          displayName: ownerDisplayName,
+          dateOfBirth: ownerDateOfBirth,
+          bio: "Building and growing the Atoll community.",
+          country: "Rwanda",
+          city: "Kigali",
+          accountStatus: "active",
+        })
+        .returning();
+
+      if (!createdOwnerProfile) {
+        throw new Error("Owner profile creation returned no record.");
+      }
+
+      ownerProfile = createdOwnerProfile;
+      console.log("Owner profile created.");
+    } else {
+      console.log("Existing owner profile preserved.");
+    }
+
+    // Create default settings only if they are missing.
+    // Existing owner preferences are never overwritten.
+    await db
+      .insert(profileSettings)
+      .values({
+        userId: ownerId,
+        isDiscoverable: true,
+        showOnlineStatus: true,
+        allowMessages: "everyone",
+        notificationPreferences: {},
+      })
+      .onConflictDoNothing();
+
+    // Create the owner role only if missing. Never silently downgrade it.
+    const [existingOwnerAdmin] = await db
+      .select({ userId: adminUsers.userId, role: adminUsers.role })
+      .from(adminUsers)
+      .where(eq(adminUsers.userId, ownerId))
+      .limit(1);
+
+    if (!existingOwnerAdmin) {
+      await db.insert(adminUsers).values({
+        userId: ownerId,
+        role: "owner",
+        grantedBy: null,
+      });
+      console.log("Owner admin role created.");
+    } else if (existingOwnerAdmin.role !== "owner") {
+      throw new Error(
+        "The configured owner account has an admin record, but its role is not 'owner'. Review admin_users manually; seed will not change it.",
+      );
+    } else {
+      console.log("Existing owner admin role preserved.");
+    }
+
     const owner = {
-      id: ownerResult.user.id,
-      username: getRequiredEnv("ATOLL_OWNER_USERNAME").toLowerCase(),
-      displayName: getRequiredEnv("ATOLL_OWNER_DISPLAY_NAME"),
-      dateOfBirth: getRequiredEnv("ATOLL_OWNER_DATE_OF_BIRTH"),
-      bio: "Building and growing the Atoll community.",
-      country: "Rwanda",
-      city: "Kigali",
-      avatarUrl: null as string | null,
+      id: ownerProfile.id,
+      username: ownerProfile.username,
+      displayName: ownerProfile.displayName ?? "",
+      dateOfBirth: ownerProfile.dateOfBirth,
+      bio: ownerProfile.bio ?? "",
+      country: ownerProfile.country ?? "Rwanda",
+      city: ownerProfile.city ?? "Kigali",
+      avatarUrl: ownerProfile.avatarUrl,
     };
 
     // --------------------------------------------------
@@ -465,6 +542,84 @@ async function seed() {
 
     console.log(`\nPrepared ${users.length} application profiles.`);
 
+    // Supabase Auth database triggers may create mock profiles/settings
+    // automatically. Allow those known seed accounts, but reject unrelated users.
+    console.log("\nChecking application profiles...");
+
+    const mockUserIds = new Set(mockAuthUsers.map((user) => user.id));
+
+    const allProfiles = await db.select({ id: profiles.id }).from(profiles);
+
+    console.log(`Found ${allProfiles.length} application profiles.`);
+
+    const unexpectedProfiles = allProfiles.filter(
+      (profile) => profile.id !== owner.id && !mockUserIds.has(profile.id),
+    );
+
+    if (unexpectedProfiles.length > 0) {
+      throw new Error(
+        "Unexpected application profiles exist outside the owner and configured seed accounts. Run development cleanup and retry.",
+      );
+    }
+
+    console.log("Application profile check passed.");
+
+    // Check that content tables are empty before inserting seed data.
+    console.log("\nChecking existing development data...");
+
+    const { posts } = await import("./schema/posts");
+    const { comments, follows, reactions } = await import("./schema/actions");
+    const { conversations } = await import("./schema/conversation");
+    const { messages } = await import("./schema/messages");
+    const { reports, blocks } = await import("./schema/reaction");
+    const { moderationActions } = await import("./schema/moderation");
+    const { notifications } = await import("./schema/notifications");
+
+    const contentChecks = [
+      { name: "posts", query: () => db.select().from(posts).limit(1) },
+      { name: "comments", query: () => db.select().from(comments).limit(1) },
+      { name: "reactions", query: () => db.select().from(reactions).limit(1) },
+      { name: "follows", query: () => db.select().from(follows).limit(1) },
+      {
+        name: "conversations",
+        query: () => db.select().from(conversations).limit(1),
+      },
+      { name: "messages", query: () => db.select().from(messages).limit(1) },
+      { name: "blocks", query: () => db.select().from(blocks).limit(1) },
+      { name: "reports", query: () => db.select().from(reports).limit(1) },
+      {
+        name: "moderation_actions",
+        query: () => db.select().from(moderationActions).limit(1),
+      },
+      {
+        name: "notifications",
+        query: () => db.select().from(notifications).limit(1),
+      },
+    ];
+
+    const nonEmptyTables: string[] = [];
+
+    for (const check of contentChecks) {
+      console.log(`  Checking ${check.name}...`);
+
+      const rows = await check.query();
+
+      if (rows.length > 0) {
+        nonEmptyTables.push(check.name);
+        console.log(`  ${check.name}: contains data`);
+      } else {
+        console.log(`  ${check.name}: empty`);
+      }
+    }
+
+    if (nonEmptyTables.length > 0) {
+      throw new Error(
+        `Development data already exists in: ${nonEmptyTables.join(", ")}. Run the development cleanup before seeding again.`,
+      );
+    }
+
+    console.log("All content-table checks passed.");
+
     // --------------------------------------------------
     // D. INSERT APPLICATION DATA
     // --------------------------------------------------
@@ -484,50 +639,84 @@ async function seed() {
       const { adminUsers } = await import("./schema/adminUser");
 
       // PROFILES
-      await tx.insert(profiles).values(
-        users.map((user) => ({
-          id: user.id,
-          username: user.username,
-          displayName: user.displayName,
-          dateOfBirth: user.dateOfBirth,
-          bio: user.bio,
-          avatarUrl: user.avatarUrl,
-          coverUrl: null,
-          country: user.country,
-          city: user.city,
-          accountStatus: "active" as const,
-        })),
-      );
+      // Mock Auth creation may already have created these rows through
+      // the Supabase Auth trigger. Upsert only mock profiles; never touch owner.
+      const mockProfiles = users.slice(1);
 
-      await tx.insert(profileSettings).values(
-        users.map((user) => ({
-          userId: user.id,
-          isDiscoverable: true,
-          showOnlineStatus: true,
-          allowMessages: "everyone" as const,
-          notificationPreferences: {},
-        })),
-      );
+      for (const user of mockProfiles) {
+        await tx
+          .insert(profiles)
+          .values({
+            id: user.id,
+            username: user.username,
+            displayName: user.displayName,
+            dateOfBirth: user.dateOfBirth,
+            bio: user.bio,
+            avatarUrl: user.avatarUrl,
+            coverUrl: null,
+            country: user.country,
+            city: user.city,
+            accountStatus: "active" as const,
+          })
+          .onConflictDoUpdate({
+            target: profiles.id,
+            set: {
+              username: user.username,
+              displayName: user.displayName,
+              dateOfBirth: user.dateOfBirth,
+              bio: user.bio,
+              avatarUrl: user.avatarUrl,
+              coverUrl: null,
+              country: user.country,
+              city: user.city,
+              accountStatus: "active" as const,
+              updatedAt: new Date(),
+            },
+          });
+      }
 
-      console.log(`  Profiles: ${users.length}`);
+      // The Auth trigger may also have created mock settings.
+      // Set development defaults for mock accounts only.
+      for (const user of mockProfiles) {
+        await tx
+          .insert(profileSettings)
+          .values({
+            userId: user.id,
+            isDiscoverable: true,
+            showOnlineStatus: true,
+            allowMessages: "everyone" as const,
+            notificationPreferences: {},
+          })
+          .onConflictDoUpdate({
+            target: profileSettings.userId,
+            set: {
+              isDiscoverable: true,
+              showOnlineStatus: true,
+              allowMessages: "everyone" as const,
+              notificationPreferences: {},
+              updatedAt: new Date(),
+            },
+          });
+      }
+
+      console.log(
+        `  Profiles: ${mockProfiles.length} mock + 1 preserved owner`,
+      );
 
       // ADMIN ROLES
+      // Owner role was initialized/preserved before this transaction.
       const moderator = users[4];
 
-      await tx.insert(adminUsers).values([
-        {
-          userId: owner.id,
-          role: "owner",
-          grantedBy: null,
-        },
-        {
+      await tx
+        .insert(adminUsers)
+        .values({
           userId: moderator.id,
           role: "moderator",
           grantedBy: owner.id,
-        },
-      ]);
+        })
+        .onConflictDoNothing();
 
-      console.log("  Admin roles: 1 owner, 1 moderator");
+      console.log("  Admin roles: owner preserved, 1 moderator seeded");
 
       // POSTS
       // Seed text-only posts until real Storage objects exist.
@@ -816,12 +1005,14 @@ async function seed() {
     console.log("\n========================================");
     console.log("        ATOLL SEED COMPLETED");
     console.log("========================================");
-    console.log(`Profiles:       ${summary.users}`);
+    console.log(
+      `Profiles:       ${summary.users} total (1 owner + ${summary.users - 1} mock)`,
+    );
     console.log(`Posts:          ${summary.posts}`);
     console.log(`Comments:       ${summary.comments}`);
     console.log(`Conversations:  ${summary.conversations}`);
     console.log(`Messages:       ${summary.messages}`);
-    console.log("Admin roles:    1 owner, 1 moderator");
+    console.log("Admin roles:    1 preserved/initialized owner, 1 moderator");
     console.log("Reports:        3");
     console.log("Moderation:     3");
     console.log("Notifications:  4");
@@ -835,7 +1026,15 @@ async function seed() {
 // 6. EXECUTION
 // ======================================================
 
-seed().catch((error) => {
-  console.error("\nAtoll seed failed:", error);
+seed().catch((error: unknown) => {
+  console.error("\nAtoll seed failed:");
+
+  if (error instanceof Error) {
+    console.error(error.message);
+    console.error(error.stack);
+  } else {
+    console.error(error);
+  }
+
   process.exitCode = 1;
 });

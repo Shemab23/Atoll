@@ -1,24 +1,11 @@
-import { db } from "@/db";
-import { sql } from "drizzle-orm";
+import { HealthController } from "@/server/controllers/health";
+import { apiSuccess } from "@/server/http/api-response";
+import { withApiHandler } from "@/server/http/with-api-handler";
 
-export async function GET() {
-  try {
-    await db.execute(sql`SELECT 1`);
+const controller = new HealthController();
 
-    return Response.json({
-      status: "ok",
-      database: "connected",
-      orm: "drizzle",
-    });
-  } catch (error) {
-    console.error("Database health check failed:", error);
+export const GET = withApiHandler(async () => {
+  const result = await controller.execute();
 
-    return Response.json(
-      {
-        status: "error",
-        database: "unavailable",
-      },
-      { status: 503 },
-    );
-  }
-}
+  return apiSuccess(result, result.status === "ok" ? 200 : 503);
+});

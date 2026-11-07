@@ -1,10 +1,10 @@
 import "server-only";
 
-import { desc, eq } from "drizzle-orm";
+import { count, desc, eq, ilike, or, and } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "@/db";
-import { adminUsers, profiles } from "@/db/schema";
+import { adminUsers, profiles, moderationActions, reports } from "@/db/schema";
 import { AppError } from "@/server/errors/app-error";
 
 export type AdminRole = "owner" | "admin" | "moderator";
@@ -344,4 +344,156 @@ export async function revokeAdminRole(actorId: string, targetUserId: string) {
 
     return { success: true };
   });
+}
+
+export type AdminUserListOptions = {
+  limit?: number;
+  offset?: number;
+  search?: string;
+  accountStatus?: "active" | "suspended" | "deleted";
+};
+
+export async function getAdminOverview(actorId: string) {
+  await requireReportAccess(actorId);
+
+  const [
+    [totalUsers],
+    [activeUsers],
+    [suspendedUsers],
+    [totalReports],
+    [pendingReports],
+    [reviewingReports],
+    [totalModerationActions],
+    [totalAdministrators],
+  ] = await Promise.all([
+    db.select({ value: count() }).from(profiles),
+    db
+      .select({ value: count() })
+      .from(profiles)
+      .where(eq(profiles.accountStatus, "active")),
+    db
+      .select({ value: count() })
+      .from(profiles)
+      .where(eq(profiles.accountStatus, "suspended")),
+    db.select({ value: count() }).from(reports),
+    db
+      .select({ value: count() })
+      .from(reports)
+      .where(eq(reports.status, "pending")),
+    db
+      .select({ value: count() })
+      .from(reports)
+      .where(eq(reports.status, "reviewing")),
+    db.select({ value: count() }).from(moderationActions),
+    db.select({ value: count() }).from(adminUsers),
+  ]);
+
+  return {
+    users: {
+      total: totalUsers.value,
+      active: activeUsers.value,
+      suspended: suspendedUsers.value,
+    },
+    reports: {
+      total: totalReports.value,
+      pending: pendingReports.value,
+      reviewing: reviewingReports.value,
+    },
+    moderation: {
+      totalActions: totalModerationActions.value,
+    },
+    administrators: {
+      total: totalAdministrators.value,
+    },
+  };
+}
+
+export async function getUsers(
+  actorId: string,
+  options: AdminUserListOptions = {},
+) {
+  await requireReportAccess(actorId);
+
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+  const offset = Math.max(options.offset ?? 0, 0);
+  const search = options.search?.trim();
+
+  const filters = [];
+
+  if (options.accountStatus) {
+    filters.push(eq(profiles.accountStatus, options.accountStatus));
+  }
+
+  if (search) {
+    filters.push(
+      or(
+        ilike(profiles.username, `%${search}%`),
+        ilike(profiles.displayName, `%${search}%`),
+      )!,
+    );
+  }
+
+  const whereClause =
+    filters.length > 0
+      ? filters.length === 1
+        ? filters[0]
+        : and(...filters)
+      : undefined;
+
+  const [users, [total]] = await Promise.all([
+    db
+      .select({
+        id: profiles.id,
+        username: profiles.username,
+        displayName: profiles.displayName,
+        accountStatus: profiles.accountStatus,
+        createdAt: profiles.createdAt,
+      })
+      .from(profiles)
+      .where(whereClause)
+      .orderBy(desc(profiles.createdAt))
+      .limit(limit)
+      .offset(offset),
+
+    db.select({ value: count() }).from(profiles).where(whereClause),
+  ]);
+
+  return {
+    users,
+    pagination: {
+      total: total.value,
+      limit,
+      offset,
+      hasMore: offset + users.length < total.value,
+    },
+  };
+}
+
+export async function getUserById(actorId: string, targetUserId: string) {
+  await requireReportAccess(actorId);
+
+  const [user] = await db
+    .select({
+      id: profiles.id,
+      username: profiles.username,
+      displayName: profiles.displayName,
+      dateOfBirth: profiles.dateOfBirth,
+      bio: profiles.bio,
+      avatarUrl: profiles.avatarUrl,
+      coverUrl: profiles.coverUrl,
+      country: profiles.country,
+      city: profiles.city,
+      accountStatus: profiles.accountStatus,
+      createdAt: profiles.createdAt,
+      updatedAt: profiles.updatedAt,
+    })
+    .from(profiles)
+    .where(eq(profiles.id, targetUserId))
+    .limit(1);
+
+  if (!user) {
+    throw new AppError("User not found.", "USER_NOT_FOUND", 404);
+  }
+
+  return user;
 }

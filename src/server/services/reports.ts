@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "@/db";
@@ -46,9 +46,21 @@ const reportInputSchema = z.discriminatedUnion("targetType", [
 
 export type CreateReportInput = z.infer<typeof reportInputSchema>;
 
+// Statuses that administrators can assign.
 export type ReportStatus = "pending" | "reviewing" | "resolved" | "dismissed";
 
+// All possible statuses, including reporter withdrawal.
+export type ReportListStatus = ReportStatus | "withdrawn";
+
 const reportStatusSchema = z.enum([
+  "pending",
+  "reviewing",
+  "resolved",
+  "dismissed",
+  "withdrawn",
+]);
+
+const adminReportStatusSchema = z.enum([
   "pending",
   "reviewing",
   "resolved",
@@ -243,6 +255,94 @@ export async function createReport(
 }
 
 /**
+ * Lists reports submitted by the authenticated reporter.
+ * A reporter can only see their own submissions.
+ */
+export async function getMyReports(
+  reporterId: string,
+  options?: {
+    status?: ReportListStatus;
+    limit?: number;
+    offset?: number;
+  },
+) {
+  const validatedReporterId = uuidSchema.parse(reporterId);
+  const validatedOptions = reportListOptionsSchema.parse(options ?? {});
+
+  const conditions = [eq(reports.reporterId, validatedReporterId)];
+
+  if (validatedOptions.status) {
+    conditions.push(eq(reports.status, validatedOptions.status));
+  }
+
+  return db
+    .select()
+    .from(reports)
+    .where(and(...conditions))
+    .orderBy(desc(reports.createdAt))
+    .limit(validatedOptions.limit)
+    .offset(validatedOptions.offset);
+}
+
+/**
+ * Allows the original reporter to withdraw their own report.
+ *
+ * Only pending and reviewing reports can be withdrawn.
+ * The report remains in the database for moderation history.
+ */
+export async function withdrawReport(reporterId: string, reportId: string) {
+  const validatedReporterId = uuidSchema.parse(reporterId);
+  const validatedReportId = uuidSchema.parse(reportId);
+
+  // Find the report while enforcing reporter ownership.
+  const [existing] = await db
+    .select()
+    .from(reports)
+    .where(
+      and(
+        eq(reports.id, validatedReportId),
+        eq(reports.reporterId, validatedReporterId),
+      ),
+    )
+    .limit(1);
+
+  if (!existing) {
+    throw new AppError("Report not found.", "REPORT_NOT_FOUND", 404);
+  }
+
+  if (existing.status !== "pending" && existing.status !== "reviewing") {
+    throw new AppError(
+      "Only pending or reviewing reports can be withdrawn.",
+      "REPORT_CANNOT_BE_WITHDRAWN",
+      409,
+    );
+  }
+
+  // Update only if the report is still in a withdrawable state.
+  const [updated] = await db
+    .update(reports)
+    .set({ status: "withdrawn" })
+    .where(
+      and(
+        eq(reports.id, validatedReportId),
+        eq(reports.reporterId, validatedReporterId),
+        inArray(reports.status, ["pending", "reviewing"]),
+      ),
+    )
+    .returning();
+
+  if (!updated) {
+    throw new AppError(
+      "The report status changed while you were withdrawing it. Please reload and try again.",
+      "REPORT_UPDATE_CONFLICT",
+      409,
+    );
+  }
+
+  return updated;
+}
+
+/**
  * Lists reports for the administrative review queue.
  */
 export async function getReports(
@@ -301,18 +401,19 @@ export async function getReportById(actorId: string, reportId: string) {
  * Repeating the current status is allowed as an idempotent operation.
  */
 function assertValidStatusTransition(
-  currentStatus: ReportStatus,
+  currentStatus: ReportListStatus,
   nextStatus: ReportStatus,
 ) {
   if (currentStatus === nextStatus) {
     return;
   }
 
-  const allowedTransitions: Record<ReportStatus, ReportStatus[]> = {
+  const allowedTransitions: Record<ReportListStatus, ReportStatus[]> = {
     pending: ["reviewing", "resolved", "dismissed"],
     reviewing: ["resolved", "dismissed"],
     resolved: [],
     dismissed: [],
+    withdrawn: [],
   };
 
   if (!allowedTransitions[currentStatus].includes(nextStatus)) {
@@ -323,7 +424,6 @@ function assertValidStatusTransition(
     );
   }
 }
-
 /**
  * Changes the review status of a report.
  */
@@ -335,7 +435,7 @@ export async function updateReportStatus(
   await requireReportAccess(uuidSchema.parse(actorId));
 
   const validatedId = uuidSchema.parse(reportId);
-  const validatedStatus = reportStatusSchema.parse(status);
+  const validatedStatus = adminReportStatusSchema.parse(status);
 
   const [existing] = await db
     .select()

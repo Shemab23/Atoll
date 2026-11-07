@@ -19,6 +19,7 @@ import { messages } from "./messages";
 export const reportStatusEnum = pgEnum("report_status", [
   "pending",
   "reviewing",
+  "withdrawn",
   "resolved",
   "dismissed",
 ]);

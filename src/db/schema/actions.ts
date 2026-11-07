@@ -48,22 +48,38 @@ export const reactions = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    postId: uuid("post_id")
-      .notNull()
-      .references(() => posts.id, { onDelete: "cascade" }),
+
+    postId: uuid("post_id").references(() => posts.id, {
+      onDelete: "cascade",
+    }),
+
+    commentId: uuid("comment_id").references(() => comments.id, {
+      onDelete: "cascade",
+    }),
+
     userId: uuid("user_id")
       .notNull()
       .references(() => profiles.id, { onDelete: "cascade" }),
+
     reactionType: text("reaction_type").notNull(),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex("reactions_post_id_user_id_unique_idx").on(
-      table.postId,
-      table.userId,
+    check(
+      "reactions_exactly_one_target_check",
+      sql`num_nonnulls(${table.postId}, ${table.commentId}) = 1`,
     ),
+
+    uniqueIndex("reactions_post_id_user_id_unique_idx")
+      .on(table.postId, table.userId)
+      .where(sql`${table.postId} IS NOT NULL`),
+
+    uniqueIndex("reactions_comment_id_user_id_unique_idx")
+      .on(table.commentId, table.userId)
+      .where(sql`${table.commentId} IS NOT NULL`),
   ],
 );
 

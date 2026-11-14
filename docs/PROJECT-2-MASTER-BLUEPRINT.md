@@ -2437,6 +2437,7 @@ Supabase Auth owns authentication credentials. The application `profiles` table 
 | account_status     | VARCHAR(20)  | Active/suspended/deleted  |
 | created_at         | TIMESTAMPTZ  | Default now               |
 | updated_at         | TIMESTAMPTZ  | Updated automatically     |
+| deleted_at         | TIMESTAMPTZ  | deleted automatically     |
 
 Do not store authentication passwords here.
 
